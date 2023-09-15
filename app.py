@@ -225,6 +225,55 @@ def getAllPosts():
         
     return "OK"
 
+@app.route("/user-channels")
+def test():
+    authHeader = "Bearer " + login().headers["token"]
+    userId = login().json()['id']
+
+    teams = getUserTeams(authHeader, userId)
+
+    channels = []
+    for team in teams:
+        channel = getChannelsForUserTeam(authHeader, userId, team['id'])
+        channels.extend(channel)
+
+    channels = list({v['id']:v for v in channels}.values()) # make the channels list unique
+    
+    print('Total Channels: ', len(channels))
+
+    return channels
+
+def getUserTeams(authHeader, userId):
+    teamRes = requests.get(
+        mmUrl + "/users/" + userId + "/teams",
+        headers={
+            "Content-type": "application/json; charset=UTF-8",
+            "Authorization": authHeader,
+        },
+    )
+
+    # Guard against bad requests
+    if teamRes.status_code != requests.codes.ok:
+        print("Get User's teams request failed with status code: ", teamRes.status_code)
+        return
+
+    return teamRes.json()
+
+def getChannelsForUserTeam(authHeader, userId, teamId):
+    userChannelsRes = requests.get(
+        mmUrl + "/users/" + userId + "/teams/" + teamId + "/channels",
+        headers={
+            "Content-type": "application/json; charset=UTF-8",
+            "Authorization": authHeader,
+        },
+    )
+
+    # Guard against bad requests
+    if userChannelsRes.status_code != requests.codes.ok:
+        print("Get User's teams request failed with status code: ", userChannelsRes.status_code)
+        return
+
+    return userChannelsRes.json()
 
 if __name__ == "__main__":
     app.run(debug=True)
