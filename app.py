@@ -11,11 +11,80 @@ loginData = {"login_id": "sysadmin", "password": "Sys@dmin-sample1"}
 
 nextFetchScheduler = scheduler(time, sleep)
 
+# --------------------- Routes ---------------------
+
 @app.route("/")
 def index():
     return render_template("index.html")
 
-# authenticate a user
+@app.route("/cancel")
+def cancel():
+    print('cancel')
+    
+    if not nextFetchScheduler.empty():
+        for event in nextFetchScheduler.queue:
+            # print('event: ', event)
+            nextFetchScheduler.cancel(event)
+
+    print('isEmpty: ', nextFetchScheduler.empty())
+    return 'cancel'
+
+@app.route("/posts")
+def getAllPosts():
+    authHeader = "Bearer " + login().headers["token"]
+    print('-'*20)
+    print('-'*20)
+    print('\n')
+    
+    channels = getChannels(authHeader) # get all channels
+    fetchIntervalInSeconds = 3 * 60 # fetch interval in seconds  
+
+    # Get the last fetch time from shelve file store
+    with shelve.open('store') as db: # handles the closing of the shelve file automatically with context manager
+        if 'lastFetchTime' in db:
+            lastFetchTime = db['lastFetchTime']
+        else:
+            lastFetchTime = 0
+
+    if lastFetchTime == 0: # This are no posts in the database
+        print('get all posts for the first time')
+        
+        if not nextFetchScheduler.empty(): cancel() # cancel all previously scheduled events
+        
+        scheduleFirstEvent(fetchIntervalInSeconds, authHeader, channels) # schedule the first event
+        
+        nextFetchScheduler.run() # run the scheduled events
+    
+    else: 
+        print('Not the first time getting posts')
+
+        if nextFetchScheduler.empty(): 
+            scheduleFirstEvent(fetchIntervalInSeconds, authHeader, channels)
+            nextFetchScheduler.run()   
+        
+    return "OK"
+
+# TODO: Add query param (userId) to get channels for a specific user id
+@app.route("/user-channels")
+def getUserChannels():
+    authHeader = "Bearer " + login().headers["token"]
+    userId = login().json()['id']
+
+    teams = fetchUserTeams(authHeader, userId)
+
+    channels = []
+    for team in teams:
+        channel = fetchChannelsForUserTeam(authHeader, userId, team['id'])
+        channels.extend(channel)
+
+    channels = list({v['id']:v for v in channels}.values()) # make the channels list unique
+    
+    print('Total Channels: ', len(channels))
+
+    return channels
+
+# --------------------- Helper Functions ---------------------
+
 def login():
     res = requests.post(
         mmUrl + "/users/login",
@@ -26,23 +95,10 @@ def login():
     return res
 
 def getChannels(authHeader):
-    res = requests.get(
-        mmUrl + "/channels",
-        headers={
-            "Content-type": "application/json; charset=UTF-8",
-            "Authorization": authHeader,
-        },
-    )
-
-    # Guard against bad requests
-    if res.status_code != requests.codes.ok:
-        print("Request failed with status code: ", res.status_code)
-        return
-
-    queryChannels = res.json()
     channels = []
+    queryChannels = fetchAllChannels(authHeader)
 
-    # Filter out the channel properties we don't want
+    # Filter out unnecessary channel properties 
     for channel in queryChannels:
         tempChannel = {}
 
@@ -67,8 +123,6 @@ def getChannels(authHeader):
     return channels
 
 def scheduleFirstEvent(fetchIntervalInSeconds, authHeader, channels):
-    print('scheduleFirstEvent')
-    # Add an event to the scheduler
     nextFetchScheduler.enter(
         0,
         1, # priority
@@ -77,10 +131,8 @@ def scheduleFirstEvent(fetchIntervalInSeconds, authHeader, channels):
     ) 
 
 def getPostsForAllChannels(fetchIntervalInSeconds, authHeader, scheduler, channels):
-    print('\n')
     print('*'*50)
     print('\n')
-    print('getPostsForAllChannels')
 
     scheduler.enter(
         fetchIntervalInSeconds, 
@@ -96,19 +148,16 @@ def getPostsForAllChannels(fetchIntervalInSeconds, authHeader, scheduler, channe
         else:
             lastFetchTime = 0
 
-    print('current time', time())
     print('lastFetchTime from store: ', lastFetchTime)
 
     # calculate the time passed since lastFetchTIme
     timePassedInSeconds = (time() - lastFetchTime)
-    print('Time passed since last fetch SUB: ', timePassedInSeconds)
+    print('Time passed since last fetch: ', timePassedInSeconds)
 
     postParams = {}
 
-    # if timePassedInSeconds >= fetchIntervalInSeconds and lastFetchTime != 0:
     if lastFetchTime != 0:
         postParams = { 'since': int(lastFetchTime * 1000) } # convert to milliseconds
-        print('get posts since last fetch time')
 
     # Set the last fetch time to the current time for next api call
     with shelve.open('store') as db:
@@ -116,11 +165,9 @@ def getPostsForAllChannels(fetchIntervalInSeconds, authHeader, scheduler, channe
 
     posts = []
 
-    print('is channels empty: ', channels == [])
     print('postParams: ', postParams)
     for channel in channels:
-        # 200 is the max number of posts per page
-        # reset page to 0 for each channel
+        # reset page to 0 for each channel and set the number of posts per page to max (200)
         postParams.update({'per_page': 200, 'page': 0})
 
         # previousPostId is used to check if there are more pages of posts
@@ -128,30 +175,13 @@ def getPostsForAllChannels(fetchIntervalInSeconds, authHeader, scheduler, channe
 
         # Loop through all pages of posts for the channel
         while previousPostId != '':
-            # Get the server response for each page of posts
-            postsRes = requests.get(
-                mmUrl + "/channels/" + channel["id"] + "/posts",
-                params=postParams,
-                headers={
-                    "Content-type": "application/json; charset=UTF-8",
-                    "Authorization": authHeader,
-                },
-            )
+            postsRes = fetchPostsForChannel(authHeader, channel['id'], postParams)
 
-            # Guard against bad requests
-            if postsRes.status_code != requests.codes.ok:
-                print("Request failed with status code: ", postsRes.status_code)
-                return
-
-            # Convert the response to JSON
-            postsRes = postsRes.json()
-
-            # Loop through each post in the response in order, filter out the properties we don't want
+            # Loop through each post in the response in order, filter out unnecessary post properties 
             for postId in postsRes['order']:
                 post = {}
                 tempPost = postsRes['posts'][postId]
                 
-                # Filter out the post properties we don't want
                 post['id'] = tempPost['id']
                 post['root_id'] = tempPost['root_id']
                 post['channel_id'] = tempPost['channel_id']
@@ -160,91 +190,49 @@ def getPostsForAllChannels(fetchIntervalInSeconds, authHeader, scheduler, channe
                 post['message'] = tempPost['message']
                 post['user_id'] = tempPost['user_id']
 
-                # Add the filtered out post to the posts list
-                posts.append(post)
+                posts.append(post) # add filtered post to the posts list
             
-            # Update the page number and previousPostId for the next page of posts
+            # Update the page number and previousPostId for the next page of posts, if any
             postParams['page'] += 1
             previousPostId = postsRes['prev_post_id']
     
     print('Total Posts SUB: ', len(posts))
 
+# --------------------- API Calls ---------------------
 
-@app.route("/cancel")
-def cancel():
-    print('cancel')
+def fetchAllChannels(authHeader):
+    res = requests.get(
+        mmUrl + "/channels",
+        headers={
+            "Content-type": "application/json; charset=UTF-8",
+            "Authorization": authHeader,
+        },
+    )
     
-    if not nextFetchScheduler.empty():
-        for event in nextFetchScheduler.queue:
-            # print('event: ', event)
-            nextFetchScheduler.cancel(event)
+    if res.status_code != requests.codes.ok:
+        print("Get all channels request failed with status code: ", res.status_code)
+        return
 
-    print('isEmpty: ', nextFetchScheduler.empty())
-    return 'cancel'
+    return res.json()
 
-@app.route("/posts")
-def getAllPosts():
-    authHeader = "Bearer " + login().headers["token"]
-    print('\n')
-    print('-'*20)
-    print('-'*20)
-    print('\n')
-    
-    channels = getChannels(authHeader) # get all channels
-    fetchIntervalInSeconds = 3 * 60 # fetch interval in seconds  
+def fetchPostsForChannel(authHeader, channelId, postParams):
+    res = requests.get(
+        mmUrl + "/channels/" + channelId + "/posts",
+        params=postParams,
+        headers={
+            "Content-type": "application/json; charset=UTF-8",
+            "Authorization": authHeader,
+        },
+    )
 
-    # Get the last fetch time from shelve file store
-    with shelve.open('store') as db: # handles the closing of the shelve file automatically with context manager
-        if 'lastFetchTime' in db:
-            lastFetchTime = db['lastFetchTime']
-        else:
-            lastFetchTime = 0
-    
-    # calculate the time passed since lastFetchTIme
-    timePassedInSeconds = (time() - lastFetchTime)
-    print('Time passed since last fetch MAIN: ', timePassedInSeconds)
+    if res.status_code != requests.codes.ok:
+        print("Get posts for a channel request failed with status code: ", res.status_code)
+        return
 
-    if lastFetchTime == 0: # This are no posts in the database
-        print('get all posts for the first time')
-        
-        cancel() # cancel all previously scheduled events
-        
-        scheduleFirstEvent(fetchIntervalInSeconds, authHeader, channels) # schedule the first event
-        
-        nextFetchScheduler.run() # run the scheduled events
-    
-    else: 
-        print('Not the first time getting posts')
+    return res.json()
 
-        if nextFetchScheduler.empty(): 
-            scheduleFirstEvent(fetchIntervalInSeconds, authHeader, channels)
-            nextFetchScheduler.run()   
-
-    if timePassedInSeconds < fetchIntervalInSeconds:
-        print("It's not time to fetch posts yet")
-        
-    return "OK"
-
-@app.route("/user-channels")
-def test():
-    authHeader = "Bearer " + login().headers["token"]
-    userId = login().json()['id']
-
-    teams = getUserTeams(authHeader, userId)
-
-    channels = []
-    for team in teams:
-        channel = getChannelsForUserTeam(authHeader, userId, team['id'])
-        channels.extend(channel)
-
-    channels = list({v['id']:v for v in channels}.values()) # make the channels list unique
-    
-    print('Total Channels: ', len(channels))
-
-    return channels
-
-def getUserTeams(authHeader, userId):
-    teamRes = requests.get(
+def fetchUserTeams(authHeader, userId):
+    res = requests.get(
         mmUrl + "/users/" + userId + "/teams",
         headers={
             "Content-type": "application/json; charset=UTF-8",
@@ -252,15 +240,14 @@ def getUserTeams(authHeader, userId):
         },
     )
 
-    # Guard against bad requests
-    if teamRes.status_code != requests.codes.ok:
-        print("Get User's teams request failed with status code: ", teamRes.status_code)
+    if res.status_code != requests.codes.ok:
+        print("Get User's teams request failed with status code: ", res.status_code)
         return
 
-    return teamRes.json()
+    return res.json()
 
-def getChannelsForUserTeam(authHeader, userId, teamId):
-    userChannelsRes = requests.get(
+def fetchChannelsForUserTeam(authHeader, userId, teamId):
+    res = requests.get(
         mmUrl + "/users/" + userId + "/teams/" + teamId + "/channels",
         headers={
             "Content-type": "application/json; charset=UTF-8",
@@ -268,12 +255,13 @@ def getChannelsForUserTeam(authHeader, userId, teamId):
         },
     )
 
-    # Guard against bad requests
-    if userChannelsRes.status_code != requests.codes.ok:
-        print("Get User's teams request failed with status code: ", userChannelsRes.status_code)
+    if res.status_code != requests.codes.ok:
+        print("Get Channels for a User team request failed with status code: ", res.status_code)
         return
 
-    return userChannelsRes.json()
+    return res.json()
+
+# --------------------- Main ---------------------
 
 if __name__ == "__main__":
     app.run(debug=True)
