@@ -6,7 +6,7 @@ import shelve
 
 app = Flask(__name__)
 
-mmUrl = "http://localhost:8065/api/v4"
+mmAPI = ""
 loginData = {"login_id": "sysadmin", "password": "Sys@dmin-sample1"}
 
 nextFetchScheduler = scheduler(time, sleep)
@@ -140,14 +140,42 @@ def setPersonalAccessToken():
     else:
         return 'Content-Type not supported!'
 
+@app.route('/set-mattermost-url', methods=['POST'])
+def setMatterMostUrl():
+    content_type = request.headers.get('Content-Type')
+    if (content_type == 'application/json'):
+        json = request.get_json()
+
+        if 'mmUrl' not in json:
+            return 'Mattermost URL not provided!'
+
+        with shelve.open('mmUrl') as db:
+            db['mmUrl'] = json['mmUrl']
+
+        return json
+    else:
+        return 'Content-Type not supported!'
+
+
 # --------------------- Helper Functions ---------------------
 
+def updateMatterMostUrl():
+    with shelve.open('mmUrl') as db:
+        if 'mmUrl' in db:
+            global mmAPI
+            mmAPI = db['mmUrl'] + '/api/v4'
+        else:
+            mmAPI = 'http://localhost:8065/api/v4'
+
 def login():
+    updateMatterMostUrl()
     res = requests.post(
-        mmUrl + "/users/login",
+        mmAPI + "/users/login",
         json=loginData,
         headers={"Content-type": "application/json; charset=UTF-8"},
     )
+
+    print('Url: ', mmAPI + "/users/login")
 
     return res
 
@@ -258,13 +286,16 @@ def getPostsForAllChannels(fetchIntervalInSeconds, authHeader, scheduler, channe
 # --------------------- API Calls ---------------------
 
 def fetchAllChannels(authHeader):
+    updateMatterMostUrl()
     res = requests.get(
-        mmUrl + "/channels",
+        mmAPI + "/channels",
         headers={
             "Content-type": "application/json; charset=UTF-8",
             "Authorization": authHeader,
         },
     )
+
+    print('Url: ', mmAPI + "/channels")
     
     if res.status_code != requests.codes.ok:
         print("Get all channels request failed with status code: ", res.status_code)
@@ -273,14 +304,17 @@ def fetchAllChannels(authHeader):
     return res.json()
 
 def fetchPostsForChannel(authHeader, channelId, postParams):
+    updateMatterMostUrl()
     res = requests.get(
-        mmUrl + "/channels/" + channelId + "/posts",
+        mmAPI + "/channels/" + channelId + "/posts",
         params=postParams,
         headers={
             "Content-type": "application/json; charset=UTF-8",
             "Authorization": authHeader,
         },
     )
+
+    print('Url: ', mmAPI + "/channels/" + channelId + "/posts")
 
     if res.status_code != requests.codes.ok:
         print("Get posts for a channel request failed with status code: ", res.status_code)
@@ -289,13 +323,16 @@ def fetchPostsForChannel(authHeader, channelId, postParams):
     return res.json()
 
 def fetchUserTeams(authHeader, userId):
+    updateMatterMostUrl()
     res = requests.get(
-        mmUrl + "/users/" + userId + "/teams",
+        mmAPI + "/users/" + userId + "/teams",
         headers={
             "Content-type": "application/json; charset=UTF-8",
             "Authorization": authHeader,
         },
     )
+
+    print('Url: ', mmAPI + "/users/" + userId + "/teams")
 
     if res.status_code != requests.codes.ok:
         print("Get User's teams request failed with status code: ", res.status_code)
@@ -304,13 +341,16 @@ def fetchUserTeams(authHeader, userId):
     return res.json()
 
 def fetchChannelsForUserTeam(authHeader, userId, teamId):
+    updateMatterMostUrl()
     res = requests.get(
-        mmUrl + "/users/" + userId + "/teams/" + teamId + "/channels",
+        mmAPI + "/users/" + userId + "/teams/" + teamId + "/channels",
         headers={
             "Content-type": "application/json; charset=UTF-8",
             "Authorization": authHeader,
         },
     )
+
+    print('Url: ', mmAPI + "/users/" + userId + "/teams/" + teamId + "/channels")
 
     if res.status_code != requests.codes.ok:
         print("Get Channels for a User team request failed with status code: ", res.status_code)
