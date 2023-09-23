@@ -1,4 +1,4 @@
-from flask import Flask, render_template
+from flask import Flask, render_template, request
 from time import time, sleep
 from sched import scheduler
 import requests
@@ -108,20 +108,37 @@ def getUserChannels():
 
     return channels
 
-@app.route('/set-interval/', defaults={'interval' : 5})
-@app.route('/set-interval/<interval>')
-def setInterval(interval):
-    with shelve.open('interval') as db:
-        db['interval'] = interval
+@app.route('/set-interval', methods=['POST'])
+def setInterval():
+    content_type = request.headers.get('Content-Type')
+    if (content_type == 'application/json'):
+        json = request.get_json()
 
-    return 'The interval is: ' + str(interval)
+        if 'interval' not in json:
+            return 'Interval not provided!'
 
-@app.route('/set-personal-access-token/<token>')
-def setPersonalAccessToken(token):
-    with shelve.open('pat') as db:
-        db['token'] = token
+        with shelve.open('interval') as db:
+            db['interval'] = json['interval']
 
-    return 'The token is: ' + str(token)
+        return json
+    else:
+        return 'Content-Type not supported!'
+
+@app.route('/set-personal-access-token', methods=['POST'])
+def setPersonalAccessToken():
+    content_type = request.headers.get('Content-Type')
+    if (content_type == 'application/json'):
+        json = request.get_json()
+
+        if 'token' not in json:
+            return 'Token not provided!'
+
+        with shelve.open('pat') as db:
+            db['token'] = json['token']
+
+        return 'The token is: ' + str(json)
+    else:
+        return 'Content-Type not supported!'
 
 # --------------------- Helper Functions ---------------------
 
@@ -304,4 +321,4 @@ def fetchChannelsForUserTeam(authHeader, userId, teamId):
 # --------------------- Main ---------------------
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=True, port=5001)
