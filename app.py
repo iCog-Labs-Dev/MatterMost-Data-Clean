@@ -37,7 +37,14 @@ def getAllPosts():
     print('\n')
     
     channels = getChannels(authHeader) # get all channels
-    fetchIntervalInSeconds = 3 * 60 # fetch interval in seconds  
+
+    with shelve.open('interval') as db:
+        if 'interval' in db:
+            interval = db['interval']
+        else:
+            interval = ''
+
+    fetchIntervalInSeconds = interval * 60 # fetch interval in seconds  
 
     # Get the last fetch time from shelve file store
     with shelve.open('store') as db: # handles the closing of the shelve file automatically with context manager
@@ -82,6 +89,14 @@ def getUserChannels():
     print('Total Channels: ', len(channels))
 
     return channels
+
+@app.route('/set-interval/', defaults={'interval' : 5})
+@app.route('/set-interval/<interval>')
+def setInterval(interval):
+    with shelve.open('interval') as db:
+        db['interval'] = interval
+
+    return 'The interval is: ' + str(interval)
 
 # --------------------- Helper Functions ---------------------
 
