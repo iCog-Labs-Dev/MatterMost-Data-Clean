@@ -31,7 +31,16 @@ def cancel():
 
 @app.route("/posts")
 def getAllPosts():
-    authHeader = "Bearer " + login().headers["token"]
+    # authHeader = "Bearer " + login().headers["token"]
+
+    with shelve.open('pat') as db:
+        if 'token' in db:
+            token = db['token']
+        else:
+            token = ''
+
+    authHeader = "Bearer " + token
+
     print('-'*20)
     print('-'*20)
     print('\n')
@@ -74,7 +83,16 @@ def getAllPosts():
 # TODO: Add query param (userId) to get channels for a specific user id
 @app.route("/user-channels")
 def getUserChannels():
-    authHeader = "Bearer " + login().headers["token"]
+    # authHeader = "Bearer " + login().headers["token"]
+
+    with shelve.open('pat') as db:
+        if 'token' in db:
+            token = db['token']
+        else:
+            token = ''
+
+    authHeader = "Bearer " + token
+    
     userId = login().json()['id']
 
     teams = fetchUserTeams(authHeader, userId)
@@ -97,6 +115,13 @@ def setInterval(interval):
         db['interval'] = interval
 
     return 'The interval is: ' + str(interval)
+
+@app.route('/set-personal-access-token/<token>')
+def setPersonalAccessToken(token):
+    with shelve.open('pat') as db:
+        db['token'] = token
+
+    return 'The token is: ' + str(token)
 
 # --------------------- Helper Functions ---------------------
 
