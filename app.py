@@ -124,22 +124,6 @@ def setInterval():
     else:
         return 'Content-Type not supported!'
 
-@app.route('/set-personal-access-token', methods=['POST'])
-def setPersonalAccessToken():
-    content_type = request.headers.get('Content-Type')
-    if (content_type == 'application/json'):
-        json = request.get_json()
-
-        if 'token' not in json:
-            return 'Token not provided!'
-
-        with shelve.open('pat') as db:
-            db['token'] = json['token']
-
-        return 'The token is: ' + str(json)
-    else:
-        return 'Content-Type not supported!'
-
 @app.route('/set-mattermost-url', methods=['POST'])
 def setMatterMostUrl():
     content_type = request.headers.get('Content-Type')
@@ -156,6 +140,35 @@ def setMatterMostUrl():
     else:
         return 'Content-Type not supported!'
 
+@app.route('/create-personal-access-token',)
+def createPersonalAccessToken():
+    loginRes = login()
+
+    authHeader = "Bearer " + loginRes.headers["token"]
+    userId = loginRes.json()['id']
+
+    updateMatterMostUrl()
+
+    res = requests.post(
+        mmAPI + "/users/" + userId + "/tokens",
+        headers={
+            "Content-type": "application/json; charset=UTF-8",
+            "Authorization": authHeader,
+        },
+        json={
+            "description": "test token",
+        },
+    )
+
+    print('Url: ', mmAPI + "/users/" + userId + "/tokens")
+    
+    if res.status_code != requests.codes.ok:
+        print("Get all channels request failed with status code: ", res.status_code)
+        return
+    
+    setAdminPersonalAccessToken(res.json()['token'])
+
+    return res.json()
 
 # --------------------- Helper Functions ---------------------
 
@@ -166,6 +179,10 @@ def updateMatterMostUrl():
             mmAPI = db['mmUrl'] + '/api/v4'
         else:
             mmAPI = 'http://localhost:8065/api/v4'
+
+def setAdminPersonalAccessToken(token):
+    with shelve.open('pat') as db:
+        db['token'] = token
 
 def login():
     updateMatterMostUrl()
